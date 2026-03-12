@@ -54,6 +54,16 @@ import { SlackAuth } from './src/permissions/slack-auth';
 import NotificationListenerModule, {
   createNotificationEventEmitter,
 } from './src/native/NotificationListenerModule';
+import BluetoothModule, {
+  BluetoothEvents,
+  type BluetoothAudioConnectedEvent,
+  type BluetoothAudioDisconnectedEvent,
+} from './src/native/BluetoothModule';
+import {
+  getDevicePreferredMode,
+  setDevicePreferredMode,
+} from './src/agent/bluetooth-device-preferences';
+import AudioPlayerModule from './src/native/AudioPlayerModule';
 
 // Scheduler config persistence
 import SchedulerModule from './src/native/SchedulerModule';
@@ -1324,6 +1334,96 @@ export default function App(): React.JSX.Element {
     settings.wakeWordKey,
     handleWakeWordDetected,
   ]);
+
+  // ─── Bluetooth audio device monitoring ──────────────────────────────────
+
+  useEffect(() => {
+    if (!vaultUnlocked || !settingsLoaded) return;
+
+    // Start Bluetooth monitoring
+    BluetoothModule.startMonitoring().catch(() => {
+      // Silently fail if Bluetooth is not available
+    });
+
+    // Handle Bluetooth audio device connected
+    const connectedListener = BluetoothEvents.addListener(
+      'bluetooth_audio_connected',
+      async (event: BluetoothAudioConnectedEvent) => {
+        const { deviceName, deviceAddress } = event;
+        DebugLogger.add(
+          'info',
+          'Bluetooth',
+          `Audio device connected: ${deviceName} (${deviceAddress})`,
+        );
+
+        // Get preferred mode for this device (default: driving)
+        const preferredMode = await getDevicePreferredMode(deviceAddress);
+        const shouldBeDriving = preferredMode === 'driving';
+
+        // Switch to preferred mode
+        if (settings.drivingMode !== shouldBeDriving) {
+          setSettings(s => ({ ...s, drivingMode: shouldBeDriving }));
+        }
+
+        // If podcast is paused, resume it
+        try {
+          const audioStatus = await AudioPlayerModule.getStatus();
+          if (audioStatus.status === 'paused' && audioStatus.url) {
+            await AudioPlayerModule.resume();
+            DebugLogger.add('info', 'Bluetooth', 'Resumed paused podcast playback');
+          }
+        } catch {
+          // Ignore errors - podcast might not be playing
+        }
+      },
+    );
+
+    // Handle Bluetooth audio device disconnected
+    const disconnectedListener = BluetoothEvents.addListener(
+      'bluetooth_audio_disconnected',
+      async (event: BluetoothAudioDisconnectedEvent) => {
+        const { deviceName, deviceAddress } = event;
+        DebugLogger.add(
+          'info',
+          'Bluetooth',
+          `Audio device disconnected: ${deviceName} (${deviceAddress})`,
+        );
+
+        // Store the current mode as preference for this device
+        if (deviceAddress) {
+          await setDevicePreferredMode(
+            deviceAddress,
+            deviceName,
+            settings.drivingMode ? 'driving' : 'normal',
+          );
+        }
+
+        // Switch to normal mode
+        if (settings.drivingMode) {
+          setSettings(s => ({ ...s, drivingMode: false }));
+        }
+
+        // Pause podcast if playing
+        try {
+          const audioStatus = await AudioPlayerModule.getStatus();
+          if (audioStatus.status === 'playing' && audioStatus.url) {
+            await AudioPlayerModule.pause();
+            DebugLogger.add('info', 'Bluetooth', 'Paused podcast playback');
+          }
+        } catch {
+          // Ignore errors - podcast might not be playing
+        }
+      },
+    );
+
+    return () => {
+      connectedListener.remove();
+      disconnectedListener.remove();
+      BluetoothModule.stopMonitoring().catch(() => {
+        // Silently fail
+      });
+    };
+  }, [vaultUnlocked, settingsLoaded, settings.drivingMode]);
 
   // ─── Driving-mode: auto-listening after TTS ──────────────────────────────
 

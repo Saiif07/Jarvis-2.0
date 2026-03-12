@@ -16,6 +16,7 @@ Geolocation.setRNConfiguration({
 });
 
 const { VolumeManager, DeviceQueryModule } = NativeModules;
+import BluetoothModule from '../native/BluetoothModule';
 
 type DeviceAction =
   | 'get_location'
@@ -23,6 +24,7 @@ type DeviceAction =
   | 'get_volume'
   | 'set_volume'
   | 'get_wifi_status'
+  | 'get_bluetooth_status'
   | 'calculate_distance';
 
 export class DeviceTool implements Tool {
@@ -31,7 +33,7 @@ export class DeviceTool implements Tool {
   }
 
   description(): string {
-    return 'Query and control device state: GPS location, battery level, volume (read/set), Wi-Fi status. Also calculates straight-line distance between two GPS coordinates using the Haversine formula.';
+    return 'Query and control device state: GPS location, battery level, volume (read/set), Wi-Fi status, Bluetooth audio device status. Also calculates straight-line distance between two GPS coordinates using the Haversine formula.';
   }
 
   systemHint(): string {
@@ -44,8 +46,8 @@ export class DeviceTool implements Tool {
       properties: {
         action: {
           type: 'string',
-          enum: ['get_location', 'get_battery', 'get_volume', 'set_volume', 'get_wifi_status', 'calculate_distance'],
-          description: 'Action to perform. set_volume: set media volume (0–100). calculate_distance: calculate straight-line distance between two GPS coordinates.',
+          enum: ['get_location', 'get_battery', 'get_volume', 'set_volume', 'get_wifi_status', 'get_bluetooth_status', 'calculate_distance'],
+          description: 'Action to perform. set_volume: set media volume (0–100). get_bluetooth_status: get Bluetooth audio device connection status. calculate_distance: calculate straight-line distance between two GPS coordinates.',
         },
         volume: {
           type: 'number',
@@ -87,6 +89,8 @@ export class DeviceTool implements Tool {
           return this.setVolume(args.volume as number);
         case 'get_wifi_status':
           return await this.getWifiStatus();
+        case 'get_bluetooth_status':
+          return await this.getBluetoothStatus();
         case 'calculate_distance':
           return this.calculateDistance(
             args.latitude1 as number,
@@ -285,6 +289,28 @@ export class DeviceTool implements Tool {
     } catch (err) {
       return errorResult(
         `Wi-Fi status query failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
+
+  private async getBluetoothStatus(): Promise<ToolResult> {
+    try {
+      if (!BluetoothModule?.getBluetoothAudioStatus) {
+        return errorResult('Bluetooth status not available (BluetoothModule missing)');
+      }
+      const status = await BluetoothModule.getBluetoothAudioStatus();
+
+      if (!status.connected) {
+        return successResult('Bluetooth audio: not connected');
+      }
+
+      const deviceInfo = status.deviceName
+        ? `${status.deviceName} (${status.deviceAddress || 'unknown address'})`
+        : status.deviceAddress || 'Unknown device';
+      return successResult(`Bluetooth audio connected: ${deviceInfo}`);
+    } catch (err) {
+      return errorResult(
+        `Bluetooth status query failed: ${err instanceof Error ? err.message : String(err)}`,
       );
     }
   }

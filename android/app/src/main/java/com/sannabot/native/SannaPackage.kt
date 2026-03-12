@@ -27,6 +27,7 @@ class SannaPackage : ReactPackage {
             AccessibilityModule(reactContext),
             AccessibilityJobModule(reactContext),
             VolumeModule(reactContext),
+            BluetoothModule(reactContext),
         )
     }
 
