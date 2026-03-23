@@ -1335,6 +1335,31 @@ export default function App(): React.JSX.Element {
     handleWakeWordDetected,
   ]);
 
+  // Dev-only: expose Bluetooth event simulators to global for emulator testing
+  useEffect(() => {
+    if (!__DEV__) return;
+    // @ts-ignore
+    (global as any).simBtConnect = (name: string = 'Emu Headset', addr: string = '00:11:22:33:44:55') => {
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const { NativeEventEmitter, NativeModules } = require('react-native');
+      const emitter = new NativeEventEmitter(NativeModules.BluetoothModule);
+      emitter.emit('bluetooth_audio_connected', { deviceName: name, deviceAddress: addr });
+    };
+    // @ts-ignore
+    (global as any).simBtDisconnect = (name: string = 'Emu Headset', addr: string = '00:11:22:33:44:55') => {
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const { NativeEventEmitter, NativeModules } = require('react-native');
+      const emitter = new NativeEventEmitter(NativeModules.BluetoothModule);
+      emitter.emit('bluetooth_audio_disconnected', { deviceName: name, deviceAddress: addr });
+    };
+    return () => {
+      // @ts-ignore
+      if ((global as any).simBtConnect) delete (global as any).simBtConnect;
+      // @ts-ignore
+      if ((global as any).simBtDisconnect) delete (global as any).simBtDisconnect;
+    };
+  }, []);
+
   // ─── Bluetooth audio device monitoring ──────────────────────────────────
 
   useEffect(() => {

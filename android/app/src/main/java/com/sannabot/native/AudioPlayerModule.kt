@@ -31,17 +31,13 @@ class AudioPlayerModule(reactContext: ReactApplicationContext) :
 
     companion object {
         private const val TAG = "AudioPlayerModule"
+        // Shared state across RN reloads (single native player instance)
+        var exoPlayer: ExoPlayer? = null
+        var currentUrl: String? = null
+        var playerListener: Player.Listener? = null
+        var isManuallyPaused: Boolean = false
+        var audioFocusRequest: AudioFocusRequest? = null
     }
-
-    private var exoPlayer: ExoPlayer? = null
-    private var currentUrl: String? = null
-    private var playerListener: Player.Listener? = null
-    
-    // Track if user manually paused (don't auto-resume on audio focus gain)
-    private var isManuallyPaused = false
-    
-    // Audio Focus
-    private var audioFocusRequest: AudioFocusRequest? = null
     private val audioManager: AudioManager
         get() = reactApplicationContext.getSystemService(Context.AUDIO_SERVICE) as AudioManager
     
@@ -460,7 +456,7 @@ class AudioPlayerModule(reactContext: ReactApplicationContext) :
 
     @Suppress("DEPRECATION")
     override fun onCatalystInstanceDestroy() {
-        cleanup()
+        // Intentionally keep player alive across RN reloads so UI can reconnect
         super.onCatalystInstanceDestroy()
     }
 }

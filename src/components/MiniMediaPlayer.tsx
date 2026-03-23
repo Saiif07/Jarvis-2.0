@@ -16,6 +16,7 @@ import AudioPlayerModule, { AudioPlayerEvents, type AudioStatus } from '../nativ
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const FILE_KEY_PREFIX = 'sanna_file_';
+const AUDIO_PERSIST_KEY = 'audio_current_status';
 
 interface EpisodeInfo {
   title: string;
@@ -31,6 +32,7 @@ export function MiniMediaPlayer({ isDark }: MiniMediaPlayerProps): React.JSX.Ele
   const [episodeInfo, setEpisodeInfo] = useState<EpisodeInfo | null>(null);
   const [infoModalVisible, setInfoModalVisible] = useState(false);
   const [loadingEpisode, setLoadingEpisode] = useState(false);
+  const [restored, setRestored] = useState(false);
 
   // Load episode info from file_storage based on URL
   const loadEpisodeInfo = useCallback(async (url: string | null) => {
@@ -85,6 +87,18 @@ export function MiniMediaPlayer({ isDark }: MiniMediaPlayerProps): React.JSX.Ele
       try {
         const currentStatus = await AudioPlayerModule.getStatus();
         setStatus(currentStatus);
+        // Persist status (lightweight)
+        try {
+          await AsyncStorage.setItem(
+            AUDIO_PERSIST_KEY,
+            JSON.stringify({
+              url: currentStatus.url,
+              status: currentStatus.status,
+              position: currentStatus.position,
+              updatedAt: Date.now(),
+            }),
+          );
+        } catch {}
         
         // Load episode info if URL changed
         if (currentStatus.url && currentStatus.url !== status?.url) {
@@ -106,24 +120,83 @@ export function MiniMediaPlayer({ isDark }: MiniMediaPlayerProps): React.JSX.Ele
     return () => clearInterval(interval);
   }, [status?.url, loadEpisodeInfo]);
 
+  // Restore last known status on mount if native reports stopped
+  useEffect(() => {
+    const tryRestore = async () => {
+      if (restored) return;
+      try {
+        const persisted = await AsyncStorage.getItem(AUDIO_PERSIST_KEY);
+        if (persisted) {
+          const data = JSON.parse(persisted) as {
+            url: string | null;
+            status: AudioStatus['status'];
+            position: number;
+          };
+          if (data?.url) {
+            // If native is stopped but we have a saved URL, seed UI as paused
+            const native = await AudioPlayerModule.getStatus();
+            if ((!native.url || native.status === 'stopped') && data.url) {
+              setStatus({
+                status: 'paused',
+                url: data.url,
+                position: data.position || 0,
+                duration: native.duration || 0,
+              });
+              loadEpisodeInfo(data.url);
+            }
+          }
+        }
+      } catch {
+        // ignore
+      } finally {
+        setRestored(true);
+      }
+    };
+    tryRestore();
+  }, [restored, loadEpisodeInfo]);
+
   // Listen to audio events
   useEffect(() => {
     const startedListener = AudioPlayerEvents.addListener('audio_started', (data: { url: string }) => {
       loadEpisodeInfo(data.url);
+      // Update persisted status optimistically
+      AsyncStorage.setItem(
+        AUDIO_PERSIST_KEY,
+        JSON.stringify({ url: data.url, status: 'playing', position: 0, updatedAt: Date.now() }),
+      ).catch(() => {});
     });
 
     const pausedListener = AudioPlayerEvents.addListener('audio_paused', () => {
       // Status will be updated by polling
+      (async () => {
+        try {
+          const s = await AudioPlayerModule.getStatus();
+          if (s.url) {
+            await AsyncStorage.setItem(
+              AUDIO_PERSIST_KEY,
+              JSON.stringify({ url: s.url, status: 'paused', position: s.position, updatedAt: Date.now() }),
+            );
+          }
+        } catch {}
+      })();
     });
 
     const completedListener = AudioPlayerEvents.addListener('audio_completed', () => {
       setStatus(null);
       setEpisodeInfo(null);
+      AsyncStorage.setItem(
+        AUDIO_PERSIST_KEY,
+        JSON.stringify({ url: null, status: 'stopped', position: 0, updatedAt: Date.now() }),
+      ).catch(() => {});
     });
 
     const stoppedListener = AudioPlayerEvents.addListener('audio_stopped', () => {
       setStatus(null);
       setEpisodeInfo(null);
+       AsyncStorage.setItem(
+        AUDIO_PERSIST_KEY,
+        JSON.stringify({ url: null, status: 'stopped', position: 0, updatedAt: Date.now() }),
+      ).catch(() => {});
     });
 
     return () => {
@@ -134,8 +207,8 @@ export function MiniMediaPlayer({ isDark }: MiniMediaPlayerProps): React.JSX.Ele
     };
   }, [loadEpisodeInfo]);
 
-  // Don't show if nothing is playing
-  if (!status || status.status === 'stopped' || !status.url) {
+  // Don't show if we have no episode to show
+  if (!status || !status.url) {
     return <View />;
   }
 
@@ -143,8 +216,31 @@ export function MiniMediaPlayer({ isDark }: MiniMediaPlayerProps): React.JSX.Ele
     try {
       if (status.status === 'playing') {
         await AudioPlayerModule.pause();
+      } else if (status.status === 'paused') {
+        // Try native resume first (if player exists)
+        try {
+          await AudioPlayerModule.resume();
+        } catch {
+          // If resume fails (no native player), start fresh from saved URL and seek to position
+          if (status.url) {
+            await AudioPlayerModule.play(status.url);
+            if (status.position > 0) {
+              try {
+                await AudioPlayerModule.seek(status.position, false);
+              } catch {}
+            }
+          }
+        }
       } else {
-        await AudioPlayerModule.resume();
+        // status 'stopped' but we have a URL in UI: start playing that URL
+        if (status.url) {
+          await AudioPlayerModule.play(status.url);
+          if (status.position > 0) {
+            try {
+              await AudioPlayerModule.seek(status.position, false);
+            } catch {}
+          }
+        }
       }
     } catch (err) {
       console.error('Failed to toggle play/pause:', err);
