@@ -5,6 +5,7 @@
   "scripts": {
     "android": "react-native run-android",
     "android:release": "react-native run-android --mode release",
+    "build:apk": "cp local.config.ts local.config.ts.bak && cp local.config.example.ts local.config.ts && cd android && ./gradlew assembleRelease; EXIT=$?; cd .. && mv local.config.ts.bak local.config.ts; echo ''; if [ $EXIT -eq 0 ]; then echo '✅ APK ready: android/app/build/outputs/apk/release/app-release.apk'; else echo '❌ Build failed (exit code '$EXIT')'; fi; exit $EXIT",
     "ios": "react-native run-ios",
     "lint": "eslint .",
     "start": "react-native start",
