@@ -17,6 +17,7 @@ const de = {
   'common.edit': 'Bearbeiten',
   'common.save': 'Speichern',
   'common.cancel': 'Abbrechen',
+  'common.ok': 'OK',
 
   // ── Alerts ───────────────────────────────────────────────────────────────
   'alert.error': 'Fehler',
@@ -133,6 +134,17 @@ const de = {
   // Skills
   'settings.skills.filterLabel': 'Nur verfügbare Skills anzeigen',
   'settings.skills.filterDesc': 'Blendet Skills aus, deren App nicht installiert oder nicht konfiguriert ist',
+  'settings.skills.upload.button': 'Skill aus Datei hinzufügen',
+  'settings.skills.upload.hint': 'Wähle eine SKILL.md-Datei von deinem Gerät aus',
+  'settings.skills.upload.successTitle': 'Upload erfolgreich',
+  'settings.skills.upload.successDesc': 'Der Skill wurde hinzugefügt. Du kannst ihn über den Schalter aktivieren.',
+  'settings.skills.upload.readError': 'Die ausgewählte Datei konnte nicht gelesen werden.',
+  'settings.skills.upload.errorBuiltin': 'Ein eingebauter Skill mit dem Namen „{name}" existiert bereits. Wähle einen anderen Namen.',
+  'settings.skills.upload.errorDuplicate': 'Ein benutzerdefinierter Skill mit dem Namen „{name}" existiert bereits. Lösche ihn zuerst, bevor du erneut hochlädst.',
+  'settings.skills.deleteDynamic.title': '"{name}" löschen?',
+  'settings.skills.deleteDynamic.message': 'Dieser benutzerdefinierte Skill wird entfernt. Das kann nicht rückgängig gemacht werden.',
+  'settings.skills.deleteDynamic.cancel': 'Abbrechen',
+  'settings.skills.deleteDynamic.confirm': 'Löschen',
   'settings.skills.badge.notInstalled': 'Nicht installiert',
   'settings.skills.badge.notConfigured': 'Nicht konfiguriert',
   'settings.skills.badge.connected': '● Verbunden',

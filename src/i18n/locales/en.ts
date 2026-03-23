@@ -17,6 +17,7 @@ const en = {
   'common.edit': 'Edit',
   'common.save': 'Save',
   'common.cancel': 'Cancel',
+  'common.ok': 'OK',
 
   // ── Alerts ───────────────────────────────────────────────────────────────
   'alert.error': 'Error',
@@ -134,6 +135,17 @@ const en = {
   // Skills
   'settings.skills.filterLabel': 'Show only available skills',
   'settings.skills.filterDesc': 'Hides skills whose app is not installed or not configured',
+  'settings.skills.upload.button': 'Add Skill from File',
+  'settings.skills.upload.hint': 'Select a SKILL.md file from your device',
+  'settings.skills.upload.successTitle': 'Upload successful',
+  'settings.skills.upload.successDesc': 'The skill was added. Enable it using the switch.',
+  'settings.skills.upload.readError': 'Could not read the selected file.',
+  'settings.skills.upload.errorBuiltin': 'A built-in skill named "{name}" already exists. Choose a different name.',
+  'settings.skills.upload.errorDuplicate': 'A custom skill named "{name}" already exists. Delete it first before uploading again.',
+  'settings.skills.deleteDynamic.title': 'Delete "{name}"?',
+  'settings.skills.deleteDynamic.message': 'This custom skill will be removed. This cannot be undone.',
+  'settings.skills.deleteDynamic.cancel': 'Cancel',
+  'settings.skills.deleteDynamic.confirm': 'Delete',
   'settings.skills.badge.notInstalled': 'Not installed',
   'settings.skills.badge.notConfigured': 'Not configured',
   'settings.skills.badge.connected': '● Connected',

@@ -31,7 +31,10 @@ export interface ValidationResult {
  * Validate the raw SKILL.md content string.
  * Returns { valid: true } on success or { valid: false, error: '<reason>' }.
  */
-export function validateSkillContent(content: string): ValidationResult {
+export function validateSkillContent(
+  content: string,
+  options?: { bundledNames?: Set<string> },
+): ValidationResult {
   // 1. Size check
   const byteLength = new TextEncoder().encode(content).length;
   if (byteLength > MAX_SKILL_SIZE_BYTES) {
@@ -82,7 +85,8 @@ export function validateSkillContent(content: string): ValidationResult {
   }
 
   // 7. Conflict with bundled skills
-  if (BUNDLED_SKILL_NAMES.has(frontmatter.name.trim())) {
+  const bundled = options?.bundledNames ?? BUNDLED_SKILL_NAMES;
+  if (bundled.has(frontmatter.name.trim())) {
     return {
       valid: false,
       error: `A built-in skill named "${frontmatter.name}" already exists. Choose a different name.`,

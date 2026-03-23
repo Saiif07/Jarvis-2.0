@@ -10,6 +10,7 @@ import {
   View,
 } from 'react-native';
 import { pick, types, errorCodes, isErrorWithCode } from '@react-native-documents/picker';
+import RNFS from 'react-native-fs';
 import type { CredentialManager } from '../../../permissions/credential-manager';
 import type { SkillInfo } from '../../../agent/skill-loader';
 import { SettingRow } from '../components/SettingRow';
@@ -156,29 +157,61 @@ export function SkillsSection({
     if (!onAddSkill) return;
     try {
       // pick() with mode:'import' copies the file into the app cache –
-      // the returned uri is a local file:// path readable via fetch()
+      // the returned uri is a local file:// path; use RNFS to read it
       const [result] = await pick({
         type: [types.plainText, 'text/markdown'],
         mode: 'import',
       });
 
       if (!result?.uri) {
-        Alert.alert('Upload Error', 'Could not read the selected file.');
+        Alert.alert(t('alert.error'), t('settings.skills.upload.readError'));
         return;
       }
 
       setUploading(true);
       let content: string;
       try {
-        const response = await fetch(result.uri);
-        content = await response.text();
+        // Some providers return percent-encoded URIs; decode to a usable path when applicable
+        const rawUri = result.uri;
+        const decodedUri = decodeURI(rawUri);
+        // Some pickers also expose a direct filesystem path or a fileCopyUri; prefer those for RNFS
+        const anyResult = result as unknown as { path?: string; fileCopyUri?: string; name?: string };
+        const directPath = anyResult.path ?? (anyResult.fileCopyUri?.startsWith('file://') ? anyResult.fileCopyUri : undefined);
+
+        if (directPath) {
+          content = await RNFS.readFile(directPath.replace(/^file:\/\//, ''), 'utf8');
+        } else if (decodedUri.startsWith('file://') || decodedUri.startsWith('/')) {
+          content = await RNFS.readFile(decodedUri.replace(/^file:\/\//, ''), 'utf8');
+        } else if (decodedUri.startsWith('content://')) {
+          // Fallback for content:// URIs via ContentResolver
+          try {
+            const response = await fetch(decodedUri);
+            content = await response.text();
+          } catch (e) {
+            // As a last resort, try reading with RNFS in case the provider exposes it
+            content = await RNFS.readFile(decodedUri, 'utf8');
+          }
+        } else {
+          // Unknown scheme: try RNFS first, then fetch as a last attempt
+          try {
+            content = await RNFS.readFile(decodedUri, 'utf8');
+          } catch {
+            const response = await fetch(decodedUri);
+            content = await response.text();
+          }
+        }
       } finally {
         setUploading(false);
       }
 
       const outcome = await onAddSkill(content);
       if (!outcome.success) {
-        Alert.alert('Invalid Skill', outcome.error ?? 'Unknown validation error.');
+        Alert.alert(t('alert.error'), outcome.error ?? 'Unknown validation error.');
+      } else {
+        Alert.alert(
+          t('settings.skills.upload.successTitle'),
+          t('settings.skills.upload.successDesc'),
+        );
       }
     } catch (err) {
       // User cancelled – silently ignore
@@ -186,7 +219,7 @@ export function SkillsSection({
         setUploading(false);
         return;
       }
-      Alert.alert('Upload Error', err instanceof Error ? err.message : String(err));
+      Alert.alert(t('alert.error'), err instanceof Error ? err.message : String(err));
       setUploading(false);
     }
   }, [onAddSkill]);
@@ -195,12 +228,12 @@ export function SkillsSection({
   const handleDeleteSkill = useCallback(
     (skill: SkillInfo) => {
       Alert.alert(
-        `Delete "${skill.name}"?`,
-        'This custom skill will be removed. This cannot be undone.',
+        t('settings.skills.deleteDynamic.title').replace('{name}', skill.name),
+        t('settings.skills.deleteDynamic.message'),
         [
-          { text: 'Cancel', style: 'cancel' },
+          { text: t('settings.skills.deleteDynamic.cancel'), style: 'cancel' },
           {
-            text: 'Delete',
+            text: t('settings.skills.deleteDynamic.confirm'),
             style: 'destructive',
             onPress: async () => {
               await onDeleteSkill?.(skill.name);
@@ -427,11 +460,11 @@ export function SkillsSection({
             {uploading ? (
               <ActivityIndicator size="small" color="#FFFFFF" />
             ) : (
-              <Text className="text-white text-sm font-semibold">+ Add Skill from File</Text>
+              <Text className="text-white text-sm font-semibold">+ {t('settings.skills.upload.button')}</Text>
             )}
           </TouchableOpacity>
           <Text className="text-label-tertiary text-[11px] mt-1 text-center">
-            Select a SKILL.md file from your device
+            {t('settings.skills.upload.hint')}
           </Text>
         </View>
       )}

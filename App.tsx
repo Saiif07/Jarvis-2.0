@@ -1815,22 +1815,32 @@ export default function App(): React.JSX.Element {
 
   const handleAddSkill = useCallback(
     async (content: string): Promise<{ success: boolean; error?: string }> => {
-      // Validate
-      const validation = validateSkillContent(content);
+      // Basic validation (size, frontmatter, required fields, format)
+      // Pass an empty set for bundledNames so we handle name conflicts ourselves with i18n messages
+      const validation = validateSkillContent(content, { bundledNames: new Set() });
       if (!validation.valid) {
         return { success: false, error: validation.error };
       }
 
       const skillName = extractSkillName(content);
 
+      // Check conflict with built-in skills
+      const isBuiltin = skillLoader.current
+        .getAllSkills()
+        .some(s => s.name === skillName && !skillLoader.current.isDynamic(s.name));
+      if (isBuiltin) {
+        return {
+          success: false,
+          error: t('settings.skills.upload.errorBuiltin').replace('{name}', skillName),
+        };
+      }
+
       // Check for duplicate dynamic skills
-      const alreadyDynamic = await dynamicSkillStore.current.hasSkill(
-        skillName,
-      );
+      const alreadyDynamic = await dynamicSkillStore.current.hasSkill(skillName);
       if (alreadyDynamic) {
         return {
           success: false,
-          error: `A custom skill named "${skillName}" already exists. Delete it first or use a different name.`,
+          error: t('settings.skills.upload.errorDuplicate').replace('{name}', skillName),
         };
       }
 
