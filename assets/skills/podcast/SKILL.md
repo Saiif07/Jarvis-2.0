@@ -1,7 +1,7 @@
 ---
 name: podcast
 category: media
-description: Search, subscribe, and listen to podcasts. Download RSS feeds, manage episodes, and play audio with position tracking. Tools: http, file_storage, play_audio.
+description: Search, subscribe, and listen to podcasts. Download RSS feeds, manage episodes, and play audio with position tracking. Tools: http, file_storage, media_queue, play_audio.
 test_prompt: Search for a podcast about technology
 permissions:
  - android.permission.INTERNET
@@ -16,9 +16,10 @@ Search for podcasts, subscribe/unsubscribe, download RSS feeds, manage episodes,
 |------|---------|
 | `http` | Fetch RSS feeds and search for podcasts |
 | `file_storage` | Store subscribed podcasts and episode data |
+| `media_queue` | Manage global playlist (set/get/clear/set_index/next/prev) |
 | `play_audio` | Play, pause, resume, seek, and control audio playback |
 
-**IMPORTANT:** For playing podcast episodes, ALWAYS use `play_audio` tool. NEVER use `intent` tool to open audio URLs in a browser or external app. The `play_audio` tool provides proper playback control, position tracking, and integrates with the podcast skill.
+**IMPORTANT:** For playing podcast episodes, ALWAYS use `media_queue` tool with action `"set"` (which auto-plays). NEVER use `intent` tool to open audio URLs in a browser or external app. The `media_queue` tool sets the playlist and starts playback automatically; use `play_audio` only for pause/resume/seek/status controls.
 
 ---
 
@@ -149,7 +150,7 @@ Examples: "Update podcasts" / "Check for new episodes" / "Refresh [podcast name]
 
 ---
 
-### Play an episode
+### Play an episode (with playlist)
 
 Examples: "Play [episode title]" / "Play latest episode of [podcast name]" / "Play episode [number] of [podcast]"
 
@@ -162,20 +163,32 @@ Examples: "Play [episode title]" / "Play latest episode of [podcast name]" / "Pl
    - If "latest" or "newest": find most recent episode (by `pub_date`)
    - If episode number: count episodes and select by index
    - If podcast name + episode: find podcast first, then episode
-4. Get episode URL from the episode data
-5. **Use `play_audio` tool with action `"play"` and the episode URL:**
+4. Build a playlist of ALL episodes for this podcast, each item:
+   - `{ "url": "<audio-url>", "title": "<episode title>", "subtitle": "<podcast name>" }`
+   - Order newest first or as requested by user
+5. **Use `media_queue` tool with action `"set"`, the full episode list, and the selected episode as `currentIndex`.** This single call sets the playlist AND starts playback automatically (with position restore):
    ```json
    {
-     "tool": "play_audio",
+     "tool": "media_queue",
      "args": {
-       "action": "play",
-       "url": "https://example.com/episode.mp3"
+       "action": "set",
+       "items": [
+         { "url": "https://cdn.podcast/ep-103.mp3", "title": "103: New Features", "subtitle": "MyPodcast" },
+         { "url": "https://cdn.podcast/ep-102.mp3", "title": "102: Last Week", "subtitle": "MyPodcast" },
+         { "url": "https://cdn.podcast/ep-101.mp3", "title": "101: Kickoff", "subtitle": "MyPodcast" }
+       ],
+       "currentIndex": 0
      }
    }
    ```
 6. Confirm: "Playing '[Episode Title]' from '[Podcast Name]'."
 
-**Note:** The `play_audio` tool automatically restores the last saved position if the episode was previously played. Do NOT use `intent` tool for podcast episodes.
+**Notes:**
+- `media_queue.set` auto-plays the item at `currentIndex`. No separate `play_audio.play` call needed.
+- The mini player shows Previous/Next buttons when the queue has more than one item.
+- `media_queue.next` / `media_queue.prev` also auto-play the target episode.
+- Position tracking is automatic (restored on play, saved on pause).
+- Do NOT use `intent` tool for podcast episodes.
 
 ---
 
@@ -210,6 +223,22 @@ Examples: "Start from beginning" / "Restart"
 
 1. `play_audio` → `seek` with `position_seconds: 0`, `isRelative: false`
 2. Confirm: "Restarted from the beginning."
+
+#### Next episode
+
+Examples: "Next episode" / "Skip to next" / "Play the next one"
+
+1. `media_queue` → `next`
+   - This auto-plays the next episode and wraps around at the end.
+2. Confirm: "Playing next episode: '[Title]'."
+
+#### Previous episode
+
+Examples: "Previous episode" / "Go back one episode" / "Play the previous one"
+
+1. `media_queue` → `prev`
+   - This auto-plays the previous episode and wraps around at the start.
+2. Confirm: "Playing previous episode: '[Title]'."
 
 ---
 
@@ -408,7 +437,9 @@ The `play_audio` tool automatically tracks playback position per audio file:
 - "Search for podcast about artificial intelligence" → Search and present results
 - "Subscribe to [podcast name]" → Subscribe and confirm
 - "Update podcasts" → Check all feeds, announce new episodes
-- "Play latest episode of [podcast]" → Find episode, use `play_audio` tool (NOT `intent`) to play
+- "Play latest episode of [podcast]" → Build episode list, use `media_queue.set` (auto-plays)
+- "Next episode" → `media_queue.next` (auto-plays next)
+- "Previous episode" → `media_queue.prev` (auto-plays previous)
 - "Pause" → Pause current playback
 - "Skip one minute forward" → Seek +60 seconds
 - "What are you playing?" → Get status and announce
@@ -420,6 +451,7 @@ The `play_audio` tool automatically tracks playback position per audio file:
 
 ## Important Rules
 
-1. **ALWAYS use `play_audio` tool for podcast episodes** – Never use `intent` tool to open audio URLs. Using `intent` will open the URL in a browser instead of playing audio.
-2. **Audio URLs are for playback, not browsing** – Episode URLs should be passed to `play_audio` with action `"play"`, not opened with `intent`.
-3. **Position tracking only works with `play_audio`** – The `play_audio` tool automatically handles position tracking; this functionality is lost if you use `intent` instead.
+1. **ALWAYS use `media_queue` tool with action `"set"` to start podcast episode playback** – This sets the playlist and auto-plays. Never use `intent` tool for audio URLs.
+2. **Use `play_audio` only for playback controls** – pause, resume, seek, status. Do NOT use `play_audio` action `"play"` for podcast episodes; use `media_queue.set` instead.
+3. **Episode navigation uses `media_queue`** – Use `media_queue.next` and `media_queue.prev` for "next/previous episode" requests. These auto-play.
+4. **Position tracking is automatic** – Both `media_queue` and `play_audio` handle position tracking transparently.

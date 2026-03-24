@@ -224,14 +224,15 @@ export function HomeScreen({
           </Text>
         </View>
 
-        {/* Center: Mini Media Player */}
-        <View className="flex-1 items-center justify-center">
+        {/* Mini Media Player – right-aligned */}
+        <View className="flex-1 items-end justify-center mr-2">
           <MiniMediaPlayer isDark={isDark} />
         </View>
 
         {/* Right: Driving mode toggle only */}
         <TouchableOpacity
-          className={`px-3 py-1.5 rounded-2xl ${drivingMode ? 'bg-accent-orange' : 'bg-surface-elevated'}`}
+          className={`px-3 rounded-lg ${drivingMode ? 'bg-accent-orange' : 'bg-surface-elevated'}`}
+          style={{ height: 36, justifyContent: 'center' }}
           onPress={onToggleDrivingMode}>
           <Text className="text-label-primary text-xs font-semibold">
             {drivingMode ? t('home.mode.driving') : t('home.mode.normal')}

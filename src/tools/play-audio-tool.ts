@@ -8,8 +8,9 @@ import type { Tool, ToolResult } from './types';
 import { errorResult, successResult } from './types';
 import AudioPlayerModule, { AudioPlayerEvents } from '../native/AudioPlayerModule';
 import { FileStorageTool } from './file-storage-tool';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { MEDIA_QUEUE_KEY, POSITIONS_FILENAME, getSavedPositionSeconds } from './media-constants';
 
-const POSITIONS_FILENAME = 'audio_positions';
 const POSITION_SAVE_INTERVAL_MS = 10000; // Save position every 10 seconds
 
 interface AudioPosition {
@@ -27,19 +28,30 @@ export class PlayAudioTool implements Tool {
 
   constructor() {
     this.fileStorage = new FileStorageTool();
-    
-    // Listen for playback events to save position
+
+    // Keep currentUrl in sync regardless of WHO started playback (tool or media_queue).
+    // Position restore is now handled natively via play(url, startPositionSeconds).
+    AudioPlayerEvents.addListener('audio_started', (data: { url: string }) => {
+      this.currentUrl = data.url;
+    });
+
+    // On pause: save position (position comes from native in seconds).
     AudioPlayerEvents.addListener('audio_paused', (data: { url: string; position: number }) => {
-      // position is already in seconds from native module
       this.savePosition(data.url, data.position);
     });
 
+    // On completed: remove saved position (episode finished).
     AudioPlayerEvents.addListener('audio_completed', (data: { url: string }) => {
       this.removePosition(data.url);
     });
 
-    AudioPlayerEvents.addListener('audio_stopped', (data: { url: string }) => {
-      this.removePosition(data.url);
+    // On stopped: SAVE position instead of removing it.
+    // Native fires 'audio_stopped' when stopCurrent() is called before a new
+    // play() — we want the old position preserved so the user can go back.
+    AudioPlayerEvents.addListener('audio_stopped', (data: { url: string; position?: number }) => {
+      if (data.url && typeof data.position === 'number' && data.position > 0) {
+        this.savePosition(data.url, data.position);
+      }
       this.currentUrl = null;
     });
 
@@ -71,7 +83,7 @@ export class PlayAudioTool implements Tool {
             'play: Start playing audio from URL (stops current if any). ' +
             'pause: Pause current playback. ' +
             'resume: Resume paused playback. ' +
-            'stop: Stop current playback. ' +
+            'stop: Stop current playback and clear media queue. ' +
             'seek: Change position (use offset_seconds for relative, position_seconds for absolute). ' +
             'status: Get current playback status (what is playing, position, duration). ' +
             'restore_position: Restore saved position for a URL (used internally).',
@@ -130,28 +142,21 @@ export class PlayAudioTool implements Tool {
     }
 
     try {
-      // Restore saved position if available
-      const savedPosition = await this.getSavedPosition(url);
-      
-      // Start playback
-      await AudioPlayerModule.play(url);
+      // If the URL is not part of the current media queue, clear the queue
+      // so standalone play_audio calls don't conflict with queued playlists.
+      await this.clearQueueIfUrlNotInIt(url);
+
+      // Get saved position so native player starts at the right spot (no audible glitch)
+      const startPos = await getSavedPositionSeconds(url);
+      await AudioPlayerModule.play(url, startPos);
       this.currentUrl = url;
 
-      // If we have a saved position, seek to it after a short delay (to allow MediaPlayer to prepare)
-      if (savedPosition !== null && savedPosition.position_seconds > 0) {
-        setTimeout(async () => {
-          try {
-            await AudioPlayerModule.seek(savedPosition.position_seconds, false);
-          } catch (e) {
-            // Ignore seek errors (audio might not be ready yet)
-          }
-        }, 500);
+      if (startPos > 0) {
         return successResult(
-          `Playing audio from ${url} (resumed from ${savedPosition.position_seconds}s)`,
-          `Resuming playback from ${Math.floor(savedPosition.position_seconds / 60)}:${String(Math.floor(savedPosition.position_seconds % 60)).padStart(2, '0')}`,
+          `Playing audio from ${url} (resumed from ${startPos}s)`,
+          `Resuming from ${Math.floor(startPos / 60)}:${String(Math.floor(startPos % 60)).padStart(2, '0')}`,
         );
       }
-
       return successResult(`Playing audio from ${url}`, 'Playing audio');
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -186,11 +191,10 @@ export class PlayAudioTool implements Tool {
   private async stop(): Promise<ToolResult> {
     try {
       await AudioPlayerModule.stop();
-      if (this.currentUrl) {
-        await this.removePosition(this.currentUrl);
-      }
       this.currentUrl = null;
-      return successResult('Stopped playback', 'Stopped');
+      // Also clear the media queue
+      await AsyncStorage.removeItem(MEDIA_QUEUE_KEY).catch(() => {});
+      return successResult('Stopped playback and cleared queue', 'Stopped');
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       return errorResult(`Failed to stop: ${message}`);
@@ -229,7 +233,7 @@ export class PlayAudioTool implements Tool {
   private async getStatus(): Promise<ToolResult> {
     try {
       const status = await AudioPlayerModule.getStatus();
-      
+
       if (status.status === 'stopped' || !status.url) {
         return successResult('No audio currently playing');
       }
@@ -240,7 +244,7 @@ export class PlayAudioTool implements Tool {
       const remainingStr = remaining > 0 ? `${Math.floor(remaining / 60)}:${String(Math.floor(remaining % 60)).padStart(2, '0')}` : 'unknown';
 
       const statusText = `Status: ${status.status}, Position: ${positionStr}/${durationStr}, Remaining: ${remainingStr}`;
-      const userText = status.status === 'playing' 
+      const userText = status.status === 'playing'
         ? `Playing, ${remainingStr} remaining`
         : status.status === 'paused'
         ? `Paused at ${positionStr}`
@@ -381,5 +385,24 @@ export class PlayAudioTool implements Tool {
         // Ignore errors
       }
     }, POSITION_SAVE_INTERVAL_MS);
+  }
+
+  /**
+   * If a media_queue exists and the given URL is NOT in it, clear the queue.
+   * This ensures standalone play_audio calls don't leave a stale playlist.
+   */
+  private async clearQueueIfUrlNotInIt(url: string): Promise<void> {
+    try {
+      const raw = await AsyncStorage.getItem(MEDIA_QUEUE_KEY);
+      if (!raw) return; // no queue – nothing to clear
+      const queue = JSON.parse(raw) as { items?: { url: string }[] };
+      if (!queue?.items || !Array.isArray(queue.items)) return;
+      const inQueue = queue.items.some(it => it.url === url);
+      if (!inQueue) {
+        await AsyncStorage.removeItem(MEDIA_QUEUE_KEY);
+      }
+    } catch {
+      // Ignore – non-critical
+    }
   }
 }

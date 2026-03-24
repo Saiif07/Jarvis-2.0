@@ -88,11 +88,19 @@ class AudioPlayerModule(reactContext: ReactApplicationContext) :
      * Play audio from URL. Stops any currently playing audio.
      */
     @ReactMethod
-    fun play(url: String, promise: Promise) {
+    fun play(url: String, startPositionSeconds: Int, promise: Promise) {
         CoroutineScope(Dispatchers.Main).launch {
             try {
-                // Stop current playback if any
+                // Stop current playback if any – emit audio_stopped with position so JS can save it
+                val oldUrl = currentUrl
+                val oldPosition = try { exoPlayer?.currentPosition?.div(1000)?.toInt() ?: 0 } catch (_: Exception) { 0 }
                 stopCurrent()
+                if (oldUrl != null) {
+                    sendEvent("audio_stopped", Arguments.createMap().apply {
+                        putString("url", oldUrl)
+                        putInt("position", oldPosition)
+                    })
+                }
 
                 // Request audio focus before playing
                 val focusResult = requestAudioFocus()
@@ -106,7 +114,7 @@ class AudioPlayerModule(reactContext: ReactApplicationContext) :
                 // Reset manual pause flag when starting new playback
                 isManuallyPaused = false
                 currentUrl = url
-                Log.d(TAG, "Playing audio from URL: $url")
+                Log.d(TAG, "Playing audio from URL: $url (startPosition=${startPositionSeconds}s)")
 
                 // Validate URL
                 try {
@@ -127,6 +135,11 @@ class AudioPlayerModule(reactContext: ReactApplicationContext) :
                     // Create MediaItem from URL
                     val mediaItem = MediaItem.fromUri(url)
                     setMediaItem(mediaItem)
+
+                    // Seek to start position BEFORE prepare – no audible glitch
+                    if (startPositionSeconds > 0) {
+                        seekTo(startPositionSeconds.toLong() * 1000)
+                    }
                     
                     // Prepare and play
                     prepare()
@@ -273,10 +286,12 @@ class AudioPlayerModule(reactContext: ReactApplicationContext) :
     fun stop(promise: Promise) {
         CoroutineScope(Dispatchers.Main).launch {
             val url = currentUrl
+            val position = try { exoPlayer?.currentPosition?.div(1000)?.toInt() ?: 0 } catch (_: Exception) { 0 }
             stopCurrent()
             if (url != null) {
                 sendEvent("audio_stopped", Arguments.createMap().apply {
                     putString("url", url)
+                    putInt("position", position)
                 })
             }
             promise.resolve("ok")

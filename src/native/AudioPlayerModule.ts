@@ -13,7 +13,7 @@ export interface AudioStatus {
 }
 
 export interface AudioPlayerModuleType {
-  play(url: string): Promise<string>;
+  play(url: string, startPositionSeconds?: number): Promise<string>;
   pause(): Promise<number>; // returns position in seconds
   resume(): Promise<string>;
   stop(): Promise<string>;

@@ -35,6 +35,7 @@ import { JournalTool } from '../tools/journal-tool';
 import { TimerTool } from '../tools/timer-tool';
 import { DateTimeTool } from '../tools/datetime-tool';
 import { PlayAudioTool } from '../tools/play-audio-tool';
+import { MediaQueueTool } from '../tools/media-queue-tool';
 
 export interface CreateToolRegistryOptions {
   credentialManager: CredentialManager;
@@ -116,6 +117,7 @@ export async function createToolRegistry(opts: CreateToolRegistryOptions): Promi
   registry.register(new AppSearchTool(opts.provider));
   registry.register(new FileStorageTool());
   registry.register(new PlayAudioTool());
+  registry.register(new MediaQueueTool());
   registry.register(new BeepTool());
   registry.register(new TimerTool());
   registry.register(new SkillDetailTool(opts.skillLoader));
