@@ -17,6 +17,7 @@ import { buildSystemPrompt } from './system-prompt';
 import type { TTSService } from '../audio/tts-service';
 import { DebugLogger } from './debug-logger';
 import { PersonalMemoryStore } from './personal-memory-store';
+import { ContextManager } from './context-manager';
 
 export type PipelineState =
   | 'idle'
@@ -39,13 +40,19 @@ export interface PipelineConfig {
   personalMemory?: string;
 }
 
+export interface PipelineHistorySnapshot {
+  history: Message[];
+  summary: string | null;
+  count: number;
+}
+
 export type StateChangeCallback = (state: PipelineState) => void;
 export type ErrorCallback = (error: string) => void;
 export type TranscriptCallback = (role: 'user' | 'assistant', text: string) => void;
 
 export class ConversationPipeline {
   private config: PipelineConfig;
-  private history: Message[] = [];
+  private contextManager: ContextManager;
   private enabledSkillNames: string[] = [];
   private onStateChange?: StateChangeCallback;
   private onError?: ErrorCallback;
@@ -54,6 +61,12 @@ export class ConversationPipeline {
 
   constructor(config: PipelineConfig) {
     this.config = config;
+    this.contextManager = new ContextManager({
+      summarizeProvider: config.provider,
+      summarizeModel: config.model,
+      maxMessages: Math.max(6, config.maxHistoryMessages ?? 20),
+      keepRecentCount: 6,
+    });
   }
 
   setCallbacks(callbacks: {
@@ -88,7 +101,7 @@ export class ConversationPipeline {
 
   /** Clear conversation history */
   clearHistory(): void {
-    this.history = [];
+    this.contextManager.clear();
   }
 
   /**
@@ -180,18 +193,16 @@ export class ConversationPipeline {
       });
       DebugLogger.logSystemPrompt(systemPrompt);
 
-      // Build messages: system + history + new user message
+      // Save user message and run condensation before building final LLM context.
       const systemMsg: Message = { role: 'system', content: systemPrompt };
       const userMsg: Message = { role: 'user', content: userText };
-
-      const messages: Message[] = [systemMsg, ...this.history, userMsg];
+      this.contextManager.add(userMsg);
+      await this.maybeCompressContext();
+      const messages: Message[] = [systemMsg, ...this.contextManager.getMessages()];
       DebugLogger.logRegisteredTools(
         this.config.tools.list(),
         this.config.tools.definitions(),
       );
-
-      // Save user message to history
-      this.history.push(userMsg);
 
       // Run the agent tool loop
       const result = await runToolLoop(
@@ -208,14 +219,10 @@ export class ConversationPipeline {
       // Check for silent reply token (e.g., from accessibility tool waiting for background result)
       const isSilent = assistantText.includes('__SILENT__');
 
-      // Save intermediate tool call messages to history (assistant tool calls + tool results)
-      this.history.push(...result.newMessages);
-
-      // Save final assistant response to history
-      this.history.push({ role: 'assistant', content: assistantText });
-
-      // Trim history to avoid context overflow
-      this.trimHistory(this.config.maxHistoryMessages ?? 20);
+      // Save intermediate tool call messages + final assistant response into context.
+      result.newMessages.forEach(msg => this.contextManager.add(msg));
+      this.contextManager.add({ role: 'assistant', content: assistantText });
+      await this.maybeCompressContext();
 
       // If silent, don't show bubble or speak - the actual result will come via appendPending
       if (isSilent) {
@@ -266,10 +273,11 @@ export class ConversationPipeline {
       this.onError?.(message);
 
       // Save an error assistant message so the LLM has context on the next turn
-      this.history.push({
+      this.contextManager.add({
         role: 'assistant',
         content: `[Error: ${message}] I was unable to process the request.`,
       });
+      await this.maybeCompressContext();
 
       // Try to speak error in driving mode
       if (this.config.drivingMode) {
@@ -303,17 +311,20 @@ export class ConversationPipeline {
    * always begins with a clean 'user' or plain 'assistant' message.
    */
   private trimHistory(maxMessages: number): void {
-    if (this.history.length <= maxMessages) {
+    const exported = this.contextManager.export();
+    const history = [...exported.history];
+    if (history.length === 0) {
       return;
     }
 
-    let start = this.history.length - maxMessages;
+    const safeMax = Math.max(1, maxMessages);
+    let start = history.length > safeMax ? history.length - safeMax : 0;
 
     // Advance past any orphaned messages at the cut point:
     // - 'tool' messages without their preceding assistant+toolCalls
     // - 'assistant' messages with toolCalls whose tool results follow
-    while (start < this.history.length) {
-      const msg = this.history[start];
+    while (start < history.length) {
+      const msg = history[start];
       if (msg.role === 'tool') {
         // Orphaned tool result – skip
         start++;
@@ -330,17 +341,48 @@ export class ConversationPipeline {
       }
     }
 
-    this.history = this.history.slice(start);
+    this.contextManager.import({
+      history: history.slice(start),
+      summary: exported.summary,
+      count: exported.count,
+    });
+  }
+
+  /**
+   * Run safety trimming and optional context condensation.
+   * The trim pass remains as a guard so compression never leaves an invalid
+   * tool-call boundary at the start of the retained recent history.
+   */
+  private async maybeCompressContext(): Promise<void> {
+    this.trimHistory(this.config.maxHistoryMessages ?? 20);
+    await this.contextManager.maybeCompress();
+    this.trimHistory(this.config.maxHistoryMessages ?? 20);
   }
 
   /** Export history for session persistence */
-  exportHistory(): Message[] {
-    return [...this.history];
+  exportHistory(): PipelineHistorySnapshot {
+    return this.contextManager.export();
   }
 
-  /** Import saved history (replaces current history) */
-  importHistory(history: Message[]): void {
-    this.history = [...history];
+  /**
+   * Import saved history (replaces current history).
+   * Supports both legacy Message[] and the new snapshot format with summary.
+   */
+  importHistory(history: Message[] | PipelineHistorySnapshot): void {
+    if (Array.isArray(history)) {
+      this.contextManager.import({
+        history: [...history],
+        summary: null,
+        count: 0,
+      });
+    } else {
+      this.contextManager.import({
+        history: [...history.history],
+        summary: history.summary,
+        count: history.count,
+      });
+    }
+    this.trimHistory(this.config.maxHistoryMessages ?? 20);
   }
 
   /**
@@ -349,7 +391,10 @@ export class ConversationPipeline {
    * into the LLM context after the pipeline is already running.
    */
   appendToHistory(messages: Message[]): void {
-    this.history.push(...messages);
-    this.trimHistory(this.config.maxHistoryMessages ?? 20);
+    messages.forEach(msg => this.contextManager.add(msg));
+    this.maybeCompressContext().catch(err => {
+      const msg = err instanceof Error ? err.message : String(err);
+      DebugLogger.logError('PIPELINE', `Failed to condense appended history: ${msg}`);
+    });
   }
 }

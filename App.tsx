@@ -665,6 +665,10 @@ export default function App(): React.JSX.Element {
       pipelineRef.current.appendToHistory(
         pending.map(m => ({ role: m.role, content: m.text })),
       );
+      ConversationStore.saveContextSnapshot(
+        pipelineRef.current.exportHistory(),
+        settings.llmContextMaxMessages ?? 20,
+      ).catch(() => {});
     }
     if (settings.drivingMode) {
       const lang = settings.appLanguage === 'system' ? getSystemLocale() : settings.appLanguage;
@@ -675,7 +679,7 @@ export default function App(): React.JSX.Element {
           ttsService.current.speak(plain, lang).catch(() => {});
         });
     }
-  }, [settings.drivingMode, settings.appLanguage, settings.conversationHistoryMaxMessages]);
+  }, [settings.drivingMode, settings.appLanguage, settings.conversationHistoryMaxMessages, settings.llmContextMaxMessages]);
 
   // ─── i18n: apply locale whenever appLanguage changes ────────────────────
   useEffect(() => {
@@ -1141,6 +1145,15 @@ export default function App(): React.JSX.Element {
               })),
               settings.conversationHistoryMaxMessages ?? 50,
             ).catch(() => {});
+            // Persist condensed LLM context snapshot.
+            // We persist on assistant turns so a completed turn (user+assistant)
+            // is durably available after restart.
+            if (role === 'assistant') {
+              ConversationStore.saveContextSnapshot(
+                pipeline.exportHistory(),
+                settings.llmContextMaxMessages ?? 20,
+              ).catch(() => {});
+            }
             return updated;
           });
         },
@@ -1152,18 +1165,25 @@ export default function App(): React.JSX.Element {
         pipeline.importHistory(oldPipeline.exportHistory());
       } else {
         // First pipeline creation: restore LLM history from AsyncStorage.
-        // Inject only the last N messages configured for LLM context.
-        ConversationStore.loadHistory(
-          settings.conversationHistoryMaxMessages ?? 50,
-        )
-          .then(stored => {
-            if (stored.length > 0) {
-              pipeline.importHistory(
-                stored
-                  .slice(-(settings.llmContextMaxMessages ?? 20))
-                  .map(m => ({ role: m.role, content: m.text })),
-              );
+        // Prefer condensed snapshot (summary + last X raw messages).
+        // Fallback to legacy plain history if snapshot is not present.
+        ConversationStore.loadContextSnapshot(settings.llmContextMaxMessages ?? 20)
+          .then(snapshot => {
+            if (snapshot) {
+              pipeline.importHistory(snapshot);
+              return;
             }
+            return ConversationStore.loadHistory(
+              settings.conversationHistoryMaxMessages ?? 50,
+            ).then(stored => {
+              if (stored.length > 0) {
+                pipeline.importHistory(
+                  stored
+                    .slice(-(settings.llmContextMaxMessages ?? 20))
+                    .map(m => ({ role: m.role, content: m.text })),
+                );
+              }
+            });
           })
           .catch(() => {});
       }

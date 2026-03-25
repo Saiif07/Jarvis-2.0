@@ -17,10 +17,12 @@
  * Only clean user/assistant messages are stored (no tool calls, no tool results).
  */
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import type { Message } from '../llm/types';
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
 const HISTORY_KEY = 'conversation_history';
+const CONTEXT_KEY = 'conversation_context';
 const PENDING_KEY = 'background_pending';
 
 /** Default max messages stored in conversation_history (shown in UI) */
@@ -36,6 +38,12 @@ export interface StoredMessage {
   text: string;
   /** ISO-8601 timestamp string */
   timestamp: string;
+}
+
+export interface StoredContextSnapshot {
+  history: Message[];
+  summary: string | null;
+  count: number;
 }
 
 // ── ConversationStore ─────────────────────────────────────────────────────────
@@ -58,6 +66,24 @@ export class ConversationStore {
   }
 
   /**
+   * Persist LLM context as "last X raw messages + condensed summary of older turns".
+   * This lets us preserve long-run context across app restarts without keeping
+   * every historical message verbatim.
+   */
+  static async saveContextSnapshot(
+    snapshot: StoredContextSnapshot,
+    maxMessages = DEFAULT_MAX_HISTORY,
+  ): Promise<void> {
+    const safeMax = Math.max(1, maxMessages);
+    const payload: StoredContextSnapshot = {
+      history: Array.isArray(snapshot.history) ? snapshot.history.slice(-safeMax) : [],
+      summary: typeof snapshot.summary === 'string' ? snapshot.summary : null,
+      count: Number.isFinite(snapshot.count) ? snapshot.count : 0,
+    };
+    await AsyncStorage.setItem(CONTEXT_KEY, JSON.stringify(payload));
+  }
+
+  /**
    * Load the persisted conversation history (called by main app on startup).
    * Returns an empty array if nothing is stored yet.
    */
@@ -75,6 +101,43 @@ export class ConversationStore {
       return valid.slice(-safeMax);
     } catch {
       return [];
+    }
+  }
+
+  /**
+   * Load previously persisted LLM context snapshot.
+   * Returns null when unavailable or malformed.
+   */
+  static async loadContextSnapshot(
+    maxMessages = DEFAULT_MAX_HISTORY,
+  ): Promise<StoredContextSnapshot | null> {
+    try {
+      const json = await AsyncStorage.getItem(CONTEXT_KEY);
+      if (!json) return null;
+
+      const parsed = JSON.parse(json) as unknown;
+      if (!parsed || typeof parsed !== 'object') return null;
+
+      const obj = parsed as Partial<StoredContextSnapshot>;
+      if (!Array.isArray(obj.history)) return null;
+
+      const validHistory = obj.history.filter(
+        m =>
+          m &&
+          typeof m === 'object' &&
+          typeof m.role === 'string' &&
+          typeof m.content === 'string' &&
+          ['system', 'user', 'assistant', 'tool'].includes(m.role),
+      ) as Message[];
+
+      const safeMax = Math.max(1, maxMessages);
+      return {
+        history: validHistory.slice(-safeMax),
+        summary: typeof obj.summary === 'string' ? obj.summary : null,
+        count: Number.isFinite(obj.count) ? (obj.count as number) : 0,
+      };
+    } catch {
+      return null;
     }
   }
 
@@ -148,6 +211,6 @@ export class ConversationStore {
    * Clear the full conversation history (e.g. when user clears chat).
    */
   static async clearHistory(): Promise<void> {
-    await AsyncStorage.removeItem(HISTORY_KEY);
+    await AsyncStorage.multiRemove([HISTORY_KEY, CONTEXT_KEY]);
   }
 }

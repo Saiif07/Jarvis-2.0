@@ -99,21 +99,19 @@ export class ContextManager {
 
     if (toSummarize.length === 0) return;
 
-    const summary = await this.summarize(toSummarize);
-
-    // Combine with existing summary
-    if (this.summaryPrefix) {
-      this.summaryPrefix = `${this.summaryPrefix}\n\n${summary}`;
-    } else {
-      this.summaryPrefix = summary;
-    }
+    // Re-condense existing summary + newly aged-out messages into one summary.
+    this.summaryPrefix = await this.summarize(toSummarize, this.summaryPrefix);
 
     this.summarizedMessageCount += toSummarize.length;
     this.history = toKeep;
   }
 
-  /** Generate a summary of a list of messages using the LLM */
-  private async summarize(messages: Message[]): Promise<string> {
+  /**
+   * Generate a summary using the LLM.
+   * When an existing summary is present, the model rewrites it together with the
+   * newly aged-out messages into a fresh single summary.
+   */
+  private async summarize(messages: Message[], existingSummary: string | null): Promise<string> {
     const conversationText = messages
       .map(m => {
         const role = m.role === 'user' ? 'User' : m.role === 'assistant' ? 'Assistant' : m.role;
@@ -121,15 +119,26 @@ export class ContextManager {
       })
       .join('\n\n');
 
+    const existingBlock = existingSummary
+      ? `Existing summary:
+${existingSummary}
+
+`
+      : '';
+
     const summaryPrompt: Message[] = [
       {
         role: 'user',
-        content: `Summarize the following conversation briefly and concisely. Keep all important facts, decisions made, and actions taken. Use bullet points.
+        content: `Rewrite the conversation memory into ONE concise bullet-list summary.
+Keep important facts, user preferences, decisions, commitments, unresolved tasks, and outcomes.
+Remove duplication and stale details. Keep chronology where relevant.
+Do not include meta commentary.
 
-Conversation:
+${existingBlock}Newly aged-out conversation messages:
+
 ${conversationText}
 
-Summary:`,
+Updated summary:`,
       },
     ];
 
@@ -140,10 +149,11 @@ Summary:`,
         { maxTokens: 1024, temperature: 0 },
       );
       return response.content;
-    } catch (err) {
-      // Fallback: simple truncation summary
+    } catch {
+      // Fallback: preserve existing summary and append a short glimpse of new content.
       const words = conversationText.split(' ').slice(0, 100);
-      return `[Summary not available] Topics: ${words.join(' ')}...`;
+      const newTopics = `[Latest topics] ${words.join(' ')}...`;
+      return existingSummary ? `${existingSummary}\n\n${newTopics}` : `[Summary not available] ${newTopics}`;
     }
   }
 
