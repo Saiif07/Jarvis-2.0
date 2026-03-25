@@ -301,7 +301,8 @@ export function HomeScreen({
                   ? { padding: 12, gap: 10, flex: 1 }
                   : { padding: 12, gap: 10, paddingBottom: 8 }
               }
-              showsVerticalScrollIndicator={false}>
+              showsVerticalScrollIndicator={false}
+              keyboardShouldPersistTaps="always">
               {historyLoading ? (
                 <View className="flex-1 items-center justify-center gap-2 py-8">
                   <ActivityIndicator size="small" color="#007AFF" />
@@ -338,6 +339,7 @@ export function HomeScreen({
             onMicPress={onMicPress}
             onSubmit={onTextSubmit}
             showMic={false}
+            isDark={isDark}
           />
         </View>
       ) : (
@@ -352,7 +354,7 @@ export function HomeScreen({
                 : { padding: 16, gap: 12, paddingBottom: 8 }
             }
             showsVerticalScrollIndicator={false}
-            keyboardShouldPersistTaps="handled">
+            keyboardShouldPersistTaps="always">
 
             {historyLoading ? (
               <View className="flex-1 items-center justify-center py-16 gap-3">
@@ -392,6 +394,7 @@ export function HomeScreen({
             pipelineState={pipelineState}
             onMicPress={onMicPress}
             onSubmit={onTextSubmit}
+            isDark={isDark}
           />
         </View>
       )}
@@ -412,6 +415,7 @@ interface InputBarProps {
   onMicPress: () => void;
   onSubmit: (text: string) => void;
   showMic?: boolean;
+  isDark: boolean;
 }
 
 const INPUT_DRAFT_KEY = 'sanna_input_draft';
@@ -422,6 +426,7 @@ const InputBar = React.memo(function InputBar({
   onMicPress,
   onSubmit,
   showMic = true,
+  isDark,
 }: InputBarProps) {
   // Uncontrolled input: text lives in a ref, NOT in React state.
   // This avoids the New Architecture bug where setState() on every
@@ -569,6 +574,18 @@ const InputBar = React.memo(function InputBar({
           autoCapitalize="none"
           keyboardType="default"
           showSoftInputOnFocus={true}
+          underlineColorAndroid="transparent"
+          // Android + Fabric/NativeWind: without textAlignVertical/c explicit color, IME often
+          // misbehaves (no visible text or keys appear to do nothing).
+          style={
+            Platform.OS === 'android'
+              ? {
+                  textAlignVertical: 'center',
+                  color: isDark ? '#FFFFFF' : '#000000',
+                  paddingVertical: 0,
+                }
+              : undefined
+          }
         />
 
         <TouchableOpacity
