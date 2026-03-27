@@ -2,7 +2,7 @@
  * Custom Metro transformer for .md files.
  * Converts markdown files to JavaScript modules that export the file contents as a string.
  */
-const upstreamTransformer = require('metro-babel-transformer');
+const upstreamTransformer = require('@react-native/metro-babel-transformer');
 const path = require('path');
 const fs = require('fs');
 
