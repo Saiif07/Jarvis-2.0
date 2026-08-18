@@ -31,6 +31,10 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
 
+      - name: Generate Missing Debug Keystore
+        run: |
+          keytool -genkey -v -keystore android/app/debug.keystore -storepass android -alias androiddebugkey -keypass android -dname "CN=Android Debug,O=Android,C=US" -keyalg RSA -keysize 2048 -validity 10000
+
       - name: Grant Execute Permission for Gradle
         run: chmod +x android/gradlew
 
