@@ -1,4 +1,4 @@
-name: Buname: Build Jarvis 2.0 APK
+name: Build Jarvis 2.0 APK
 
 on:
   push:
